@@ -280,8 +280,10 @@ class FrontEnd:
     def fly_toward_aruco(self, marker_id):
         """
         Fly the Tello toward the specified ArUco marker until the drone is approximately 1 meter away.
+        While approaching, adjust yaw so that the marker remains centered.
         Returns True when done.
         """
+        detection_count = 0
         print(f"Flying toward ArUco marker {marker_id} until ~1 meter away.")
         # Temporarily disable RC control to avoid interference with high-level commands
         original_rc_control = self.send_rc_control
@@ -295,17 +297,43 @@ class FrontEnd:
                 frame = self.frame_read.frame.copy()
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
                 corners, ids, _ = cv2.aruco.detectMarkers(gray, self.aruco_dict, parameters=self.aruco_params)
+
                 if ids is not None:
                     for i in range(len(ids)):
                         if ids[i][0] == marker_id:
                             if self.camera_matrix is not None and self.dist_coeffs is not None:
+                                # Estimate pose of the marker to determine distance
                                 rvec, tvec, _ = cv2.aruco.estimatePoseSingleMarkers(
                                     corners[i], ARUCO_MARKER_SIZE, self.camera_matrix, self.dist_coeffs)
                                 distance = np.linalg.norm(tvec)
                                 print(f"Marker {marker_id} distance: {distance:.2f} m")
+                                
+                                # Compute the marker's center (average of the four corner points)
+                                marker_center = np.mean(corners[i][0], axis=0)
+                                frame_center = np.array([frame.shape[1] / 2, frame.shape[0] / 2])
+                                error_x = marker_center[0] - frame_center[0]
+                                
+                                # Define a pixel threshold for horizontal error to consider the marker as centered
+                                threshold = 20  
+                                
+                                # Adjust yaw if the marker is off-center
+                                if abs(error_x) > threshold:
+                                    if error_x > 0:
+                                        # Marker is to the right; rotate clockwise to center it
+                                        print("Marker is to the right, rotating clockwise.")
+                                        self.tello.rotate_clockwise(10)
+                                    else:
+                                        # Marker is to the left; rotate counter-clockwise to center it
+                                        print("Marker is to the left, rotating counter-clockwise.")
+                                        self.tello.rotate_counter_clockwise(10)
+                                    # Allow time for rotation to complete before moving forward
+                                    time.sleep(0.5)
+                                else:
+                                    print("Marker is centered.")
+
+                                # Move forward if still far away from the marker
                                 if distance > 1.0:
-                                    # Move forward a small increment (20 cm) at a time
-                                    self.tello.move_forward(20)
+                                    self.tello.move_forward(100)
                                     time.sleep(1)
                                 else:
                                     print(f"Reached ~1 meter from marker {marker_id}.")
@@ -313,8 +341,16 @@ class FrontEnd:
                 else:
                     print("Marker not found. Hovering...")
                     time.sleep(0.5)
+                    detection_count += 1
+
+                    if detection_count > 10:
+                        print('Could not detect Aruco Code')
+                        return True
+
         finally:
+            # Re-enable RC control after operation is complete
             self.send_rc_control = original_rc_control
+
 
     def execute_sequence(self, sequence):
         """
@@ -374,8 +410,8 @@ def main():
     frontend.user_sequence = [
         # ("fly_forward", 2),
         # ("turn_clock_wise", 90),
-        ("detect_aruco", 42),
-        # ("fly_toward_aruco", 42),
+        # ("detect_aruco", 27),
+        ("fly_toward_aruco", 27),
         # ("land", None)
     ]
     # =======================================================================
