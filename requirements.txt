@@ -1,4 +1,6 @@
+# Recommended Python version: 3.8.x
+
 djitellopy
-opencv-python
+opencv-contrib-python
 pygame
 numpy
